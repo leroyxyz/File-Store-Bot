@@ -135,7 +135,7 @@ def handle_cancel(message):
 # RÉCEPTION DE FICHIERS
 # ==========================================
 
-@bot.message_handler(content_types=["document", "photo", "video", "audio"])
+@bot.message_handler(content_types=["document", "photo", "video", "audio", "sticker"])
 def handle_file(message):
     if not is_admin(message.from_user.id):
         bot.reply_to(message, "⛔ Tu n'es pas autorisé à uploader de fichiers.")
