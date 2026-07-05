@@ -1,43 +1,58 @@
-# Mon File Store Bot
+# File Store Bot Pro
 
-Bot Telegram simple qui stocke des fichiers dans un canal privé et génère
-des liens de partage. Supporte un fichier unique ou un lot de plusieurs
-fichiers sous un seul lien (mode batch).
+Bot Telegram de stockage et partage de fichiers, entièrement personnalisable
+depuis Telegram (aucun accès GitHub nécessaire après le déploiement initial).
 
-## Variables à configurer dans Railway (onglet "Variables")
+## Variables Railway (inchangées)
 
 | Nom | Exemple | Où le trouver |
 |---|---|---|
-| `BOT_TOKEN` | `123456:ABC-DEF...` | Donné par @BotFather après `/newbot` |
-| `DB_CHANNEL` | `-1001234567890` | ID de ton canal privé (voir ci-dessous) |
-| `ADMIN_IDS` | `987654321` | Ton ID Telegram (voir ci-dessous), plusieurs ids possibles séparés par des virgules |
+| `BOT_TOKEN` | `123456:ABC-DEF...` | @BotFather |
+| `DB_CHANNEL` | `-1001234567890` | ID de ton canal privé (via @userinfobot) |
+| `ADMIN_IDS` | `987654321` | Ton ID Telegram (via @userinfobot) |
 
-### Trouver l'ID du canal (DB_CHANNEL)
-1. Crée un canal Telegram, mets-le en **privé**
-2. Ajoute ton bot comme **administrateur** du canal
-3. Poste un message dans le canal
-4. Transfère ce message à **@userinfobot**
-5. Il te donne l'ID du canal (nombre négatif, commence par `-100`)
+## Commandes
 
-### Trouver ton ID Telegram (ADMIN_IDS)
-1. Parle à **@userinfobot**
-2. Il te répond directement avec ton ID (nombre positif)
+### Utilisateurs
+- `/start` — démarre le bot ou récupère un fichier via un lien
+- `/help` — liste des commandes
 
-## Utilisation une fois le bot en ligne
+### Admin — Contenu
+- Envoyer un fichier (document, photo, vidéo, audio, sticker) → lien immédiat
+- `/batch` → transfère le **premier** puis le **dernier** fichier de la plage
+  depuis le canal privé. Le bot génère un lien couvrant tout l'intervalle.
+- `/cancel` — annule un flux en cours (batch, réglage, broadcast...)
 
-- **Un seul fichier** : envoie-le simplement au bot en message privé → il répond avec un lien
-- **Plusieurs fichiers sous un seul lien** :
-  1. Envoie `/batch`
-  2. Envoie tous les fichiers un par un
-  3. Envoie `/done` → le bot donne un seul lien pour tout le lot
-  4. `/cancel` annule un batch en cours
-- Toute personne qui clique sur le lien reçoit automatiquement le(s) fichier(s)
+### Admin — Personnalisation (sans GitHub)
+- `/setwelcome` — envoie le nouveau message `/start` (texte, image, gras,
+  italique, citation, liens, etc. — tout ce que Telegram permet de mettre
+  en forme est conservé)
+- `/setdelete` — envoie le message d'avertissement affiché après chaque
+  fichier, puis indique le délai en minutes avant suppression automatique
+- `/setforcesub` — transfère un message du canal à rendre obligatoire, puis
+  colle son lien d'invitation public
+- `/forcesub on` / `/forcesub off` — active ou coupe l'abonnement obligatoire
+- `/protect on` / `/protect off` — active ou coupe la protection anti-transfert
+  (bloque le transfert/l'enregistrement direct ; ne bloque pas les captures
+  d'écran, Telegram ne le permet pas)
 
-## Notes importantes
+### Admin — Suivi
+- `/stats` — utilisateurs uniques, liens créés, fichiers référencés, état
+  des options
+- `/broadcast` — envoie un message (texte/image/style) à tous les
+  utilisateurs ayant déjà démarré le bot
 
-- Seuls les IDs listés dans `ADMIN_IDS` peuvent envoyer des fichiers au bot
-- Le canal `DB_CHANNEL` doit rester **privé**
-- La base de données (`store.db`) est un simple fichier SQLite stocké sur le
-  serveur. Sur Railway, si tu redéploies sans volume persistant, cette base
-  peut être réinitialisée. Pour un usage sérieux, pense à ajouter un volume
-  Railway sur le dossier du projet.
+## Notes techniques
+
+- Base de données : SQLite (`store.db`), fichier local au serveur.
+- Si tu redéploies sur Railway **sans volume persistant**, ce fichier peut
+  être réinitialisé (utilisateurs, liens et réglages perdus). Pour un usage
+  sérieux, ajoute un volume Railway pointant sur le dossier du projet.
+- `/batch` par plage : le bot essaie de copier **tous** les messages entre
+  le premier et le dernier ID choisi. Les éventuels messages non-fichiers
+  dans cet intervalle (texte, service) sont automatiquement ignorés au
+  moment de la récupération.
+- L'auto-suppression utilise un minuteur en mémoire : si le bot redémarre
+  entre l'envoi et l'échéance, la suppression programmée peut être perdue
+  (le fichier reste alors chez l'utilisateur).
+  
