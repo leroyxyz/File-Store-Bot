@@ -1,15 +1,7 @@
 # File Store Bot Pro
 
 Bot Telegram de stockage et partage de fichiers, entièrement personnalisable
-depuis Telegram (aucun accès GitHub nécessaire après le déploiement initial).
-
-## Variables Railway (inchangées)
-
-| Nom | Exemple | Où le trouver |
-|---|---|---|
-| `BOT_TOKEN` | `123456:ABC-DEF...` | @BotFather |
-| `DB_CHANNEL` | `-1001234567890` | ID de ton canal privé (via @userinfobot) |
-| `ADMIN_IDS` | `987654321` | Ton ID Telegram (via @userinfobot) |
+depuis Telegram.
 
 ## Commandes
 
@@ -42,17 +34,3 @@ depuis Telegram (aucun accès GitHub nécessaire après le déploiement initial)
 - `/broadcast` — envoie un message (texte/image/style) à tous les
   utilisateurs ayant déjà démarré le bot
 
-## Notes techniques
-
-- Base de données : SQLite (`store.db`), fichier local au serveur.
-- Si tu redéploies sur Railway **sans volume persistant**, ce fichier peut
-  être réinitialisé (utilisateurs, liens et réglages perdus). Pour un usage
-  sérieux, ajoute un volume Railway pointant sur le dossier du projet.
-- `/batch` par plage : le bot essaie de copier **tous** les messages entre
-  le premier et le dernier ID choisi. Les éventuels messages non-fichiers
-  dans cet intervalle (texte, service) sont automatiquement ignorés au
-  moment de la récupération.
-- L'auto-suppression utilise un minuteur en mémoire : si le bot redémarre
-  entre l'envoi et l'échéance, la suppression programmée peut être perdue
-  (le fichier reste alors chez l'utilisateur).
-  
