@@ -110,14 +110,6 @@ def make_link(code):
     return f"https://t.me/{username}?start={code}"
 
 
-def resolve_message_ids(payload):
-    if payload["type"] == "list":
-        return payload["ids"]
-    if payload["type"] == "range":
-        return list(range(payload["start"], payload["end"] + 1))
-    return []
-
-
 # ==========================================
 # HELPERS - ENTITÉS (gras, italique, liens, etc.)
 # ==========================================
@@ -127,7 +119,7 @@ def entities_to_dicts(entities):
     result = []
     for e in entities:
         item = {"type": e.type, "offset": e.offset, "length": e.length}
-        if e.type in ("text_link",) and e.url:
+        if e.type == "text_link" and e.url:
             item["url"] = e.url
         result.append(item)
     return result
@@ -171,6 +163,30 @@ def send_rich_message(chat_id, content, extra_text="", reply_markup=None):
 
 
 # ==========================================
+# HELPERS - EXTRACTION DE FICHIER (file_id permanent)
+# ==========================================
+def extract_file_info(message):
+    ct = message.content_type
+    file_id = None
+    if ct == "document" and message.document:
+        file_id = message.document.file_id
+    elif ct == "photo" and message.photo:
+        file_id = message.photo[-1].file_id
+    elif ct == "video" and message.video:
+        file_id = message.video.file_id
+    elif ct == "audio" and message.audio:
+        file_id = message.audio.file_id
+    elif ct == "sticker" and message.sticker:
+        file_id = message.sticker.file_id
+    return {
+        "type": ct,
+        "file_id": file_id,
+        "caption": message.caption or "",
+        "entities": entities_to_dicts(message.caption_entities),
+    }
+
+
+# ==========================================
 # HELPERS - ABONNEMENT OBLIGATOIRE
 # ==========================================
 def get_forward_channel_msgid(message):
@@ -209,23 +225,40 @@ def send_subscribe_prompt(chat_id, start_arg):
 
 
 # ==========================================
-# HELPERS - COPIE PROTÉGÉE + AUTO-SUPPRESSION
+# HELPERS - LIVRAISON D'UN FICHIER (via file_id, pas via le canal)
 # ==========================================
 def protection_enabled():
     return bool(get_setting("protect_content", False))
 
 
-def deliver_file(chat_id, message_id):
-    copied = bot.copy_message(
-        chat_id, DB_CHANNEL, message_id, protect_content=protection_enabled()
-    )
+def deliver_item(chat_id, item):
+    protect = protection_enabled()
+    entities = dicts_to_entities(item.get("entities"))
+    caption = item.get("caption") or None
+    ct = item["type"]
+    fid = item["file_id"]
+
+    if ct == "document":
+        sent = bot.send_document(chat_id, fid, caption=caption, caption_entities=entities, protect_content=protect)
+    elif ct == "photo":
+        sent = bot.send_photo(chat_id, fid, caption=caption, caption_entities=entities, protect_content=protect)
+    elif ct == "video":
+        sent = bot.send_video(chat_id, fid, caption=caption, caption_entities=entities, protect_content=protect)
+    elif ct == "audio":
+        sent = bot.send_audio(chat_id, fid, caption=caption, caption_entities=entities, protect_content=protect)
+    elif ct == "sticker":
+        sent = bot.send_sticker(chat_id, fid, protect_content=protect)
+    else:
+        return None
+
     del_cfg = get_setting("delete_msg")
     if del_cfg and del_cfg.get("delay_minutes"):
         delay_min = del_cfg["delay_minutes"]
         extra = f"\n\n⏳ Ce fichier sera supprimé dans {delay_min} min. Enregistre-le vite !"
         send_rich_message(chat_id, del_cfg, extra_text=extra)
-        threading.Timer(delay_min * 60, delete_later, args=(chat_id, copied.message_id)).start()
-    return copied
+        threading.Timer(delay_min * 60, delete_later, args=(chat_id, sent.message_id)).start()
+
+    return sent
 
 
 def delete_later(chat_id, message_id):
@@ -251,9 +284,9 @@ def cmd_start(message, arg):
             bot.reply_to(message, "❌ Ce lien est invalide ou a expiré.")
             return
         bot.send_chat_action(message.chat.id, "typing")
-        for msg_id in resolve_message_ids(payload):
+        for item in payload.get("items", []):
             try:
-                deliver_file(message.chat.id, msg_id)
+                deliver_item(message.chat.id, item)
             except Exception:
                 continue
         return
@@ -294,7 +327,7 @@ def cmd_help(message):
     if is_admin(message.from_user.id):
         text += (
             "\n*Réservées aux admins*\n"
-            "Envoyer un fichier – crée automatiquement un lien de partage\n"
+            "Envoyer un fichier (ou en forwarder un depuis le canal) – crée un lien permanent\n"
             "/batch – créer un lien pour une plage de fichiers du canal\n"
             "/cancel – annuler l'opération en cours\n"
             "/stats – statistiques d'utilisation du bot\n"
@@ -323,7 +356,7 @@ def cmd_stats(message):
     cur.execute("SELECT data FROM links")
     for (raw,) in cur.fetchall():
         payload = json.loads(raw)
-        total_files += len(resolve_message_ids(payload))
+        total_files += len(payload.get("items", []))
 
     fs = get_setting("force_sub")
     protect = "Activée ✅" if protection_enabled() else "Désactivée ❌"
@@ -410,6 +443,27 @@ def cmd_cancel(message):
         bot.reply_to(message, "🚫 Opération annulée.")
     else:
         bot.reply_to(message, "ℹ️ Aucune opération en cours.")
+
+
+# ==========================================
+# RÉSOLUTION D'UNE PLAGE DE MESSAGES DU CANAL EN file_id PERMANENTS
+# ==========================================
+def resolve_batch_range(admin_chat_id, start, end):
+    items = []
+    for mid in range(start, end + 1):
+        try:
+            fwd = bot.forward_message(admin_chat_id, DB_CHANNEL, mid)
+        except Exception:
+            continue
+        item = extract_file_info(fwd)
+        try:
+            bot.delete_message(admin_chat_id, fwd.message_id)
+        except Exception:
+            pass
+        if item["file_id"]:
+            items.append(item)
+        time.sleep(0.05)
+    return items
 
 
 # ==========================================
@@ -504,71 +558,26 @@ def handle_pending(message):
         first = state["data"]["first"]
         start, end = min(first, msg_id), max(first, msg_id)
         pending.pop(uid)
-        code = save_link({"type": "range", "start": start, "end": end})
-        bot.reply_to(
-            message,
-            f"✅ Lien créé pour {end - start + 1} fichier(s) potentiels :\n{make_link(code)}"
-        )
+        bot.reply_to(message, f"⏳ Récupération de {end - start + 1} message(s), merci de patienter...")
+        items = resolve_batch_range(message.chat.id, start, end)
+        if not items:
+            bot.reply_to(message, "❌ Aucun fichier valide trouvé dans cette plage.")
+            return True
+        code = save_link({"type": "files", "items": items})
+        bot.reply_to(message, f"✅ Lien permanent créé pour {len(items)} fichier(s) :\n{make_link(code)}")
         return True
 
     return False
 
 
 # ==========================================
-# STOCKAGE D'UN FICHIER (mode normal, hors flux)
+# NOUVEAU FICHIER (envoyé directement OU forwardé depuis le canal)
 # ==========================================
-def handle_incoming_file(message):
+def handle_new_file(message):
     if not is_admin(message.from_user.id):
         bot.reply_to(message, "⛔ Tu n'es pas autorisé à uploader de fichiers.")
         return
-    copied = bot.copy_message(DB_CHANNEL, message.chat.id, message.message_id)
-    code = save_link({"type": "list", "ids": [copied.message_id]})
-    bot.reply_to(message, f"✅ Lien créé :\n{make_link(code)}")
-
-
-# ==========================================
-# ROUTAGE PRINCIPAL
-# ==========================================
-COMMANDS = {
-    "start": lambda m, a: cmd_start(m, a),
-    "help": lambda m, a: cmd_help(m),
-    "stats": lambda m, a: cmd_stats(m),
-    "setwelcome": lambda m, a: cmd_setwelcome(m),
-    "setdelete": lambda m, a: cmd_setdelete(m),
-    "setforcesub": lambda m, a: cmd_setforcesub(m),
-    "forcesub": lambda m, a: cmd_forcesub_toggle(m, a),
-    "protect": lambda m, a: cmd_protect_toggle(m, a),
-    "broadcast": lambda m, a: cmd_broadcast(m),
-    "batch": lambda m, a: cmd_batch(m),
-    "cancel": lambda m, a: cmd_cancel(m),
-}
-
-
-@bot.message_handler(content_types=["text", "photo", "document", "video", "audio", "sticker"])
-def router(message):
-    raw = message.text or message.caption or ""
-
-    if raw.startswith("/"):
-        parts = raw.split(maxsplit=1)
-        cmd = parts[0][1:].split("@")[0].lower()
-        arg = parts[1] if len(parts) > 1 else ""
-        handler = COMMANDS.get(cmd)
-        if handler:
-            handler(message, arg)
-        return
-
-    register_user(message.from_user.id)
-
-    if handle_pending(message):
-        return
-
-    if message.content_type in ("document", "photo", "video", "audio", "sticker"):
-        handle_incoming_file(message)
-
-
-# ==========================================
-# LANCEMENT
-# ==========================================
-if __name__ == "__main__":
-    print("Bot démarré, en attente de messages...")
-    bot.infinity_polling()
+    item = extract_file_info(message)
+    if not item["file_id"]:
+        bot.reply_to(message, "❌ Type de fichier non pris en charge.")
+        re
